@@ -1,0 +1,201 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(rvest)
+library(dplyr)
+library(tidyr)
+
+
+# helper function:
+# We will use the following function to get the lists of categories and knives from the ChefKnivesToGo website several times
+
+cktg_query <- function(x) {
+  html_elements(x, ".section-details") %>%
+    html_elements("a") %>%
+    html_attrs() %>%
+    tibble() %>%
+    unnest_wider(".")
+}
+
+
+flag <- TRUE
+mat <- matrix(ncol = 0, nrow = 0)
+df <- data.frame(mat)
+cktg <- 'https://www.chefknivestogo.com/'
+cktg_steels <- 'shopbysteel.html'
+cktg_steels_read <- read_html(paste(cktg, cktg_steels, sep = ''))
+steels <- cktg_steels_read %>%
+  cktg_query()
+
+for (x in 1:length(steels$href)) {
+  cktg_makers_read <- read_html(paste(cktg, steels$href[x], sep = ''))
+  
+  makers <- cktg_makers_read %>%
+    cktg_query()
+  
+  
+  for (y in 1:length(makers$href)) {
+    tryCatch({
+      cktg_knives_read <-
+        read_html(paste(cktg, makers$href[y], sep = ''))
+      
+      test <- cktg_knives_read %>% html_node(".price")
+      if (!is.na(test)) {
+        prices <- cktg_knives_read %>%
+          html_nodes('.section-details') %>%
+          html_nodes('.price') %>%
+          html_text()
+        knives <- cktg_knives_read %>%
+          cktg_query() %>%
+          mutate(
+            Prices = prices,
+            SteelGroup = steels$title[x],
+            Maker = makers$title[y],
+            SubType = NA
+          )
+        if (flag == TRUE) {
+          df <- bind_rows(df, knives)
+          flag <- FALSE
+        }
+        else {
+          if (sum(!knives$href %in% df$href) > 0) {
+            df <- df  %>% bind_rows(knives[which(!knives$href %in% df$href),])
+          }
+        }
+      }
+      
+      else {
+        if (x == 3 & y == 6) {
+          cktg_knives_read <-
+            read_html(paste(cktg, "kohetsu.html", sep = ''))
+        }
+        sub_type <- cktg_knives_read %>%
+          cktg_query()
+        
+        for (z in 1:length(sub_type)) {
+          cktg_knives_sub_read <- read_html(paste(cktg, sub_type$href[z], sep = ""))
+          prices <- cktg_knives_sub_read %>%
+            html_nodes('.section-details') %>%
+            html_nodes('.price') %>%
+            html_text()
+          knives <- cktg_knives_sub_read %>%
+            cktg_query() %>%
+            mutate(
+              Prices = prices,
+              SteelGroup = steels$title[x],
+              Maker = makers$title[y],
+              SubType = sub_type$title[z]
+            )
+          for (t in 1:length(knives$href)) {
+            if (knives$href[t] %in% df$href) {
+              df$SubType[which(df$href %in% knives$href[t])] = knives$SubType[t]
+            }
+            else {
+              df <- bind_rows(df, knives[t, ])
+            }
+          }
+        }
+      }
+    },
+    error <- function(e) {
+      cat("ERROR :", conditionMessage(e), "\n")
+    })
+  }
+}
+
+```
+
+```{r}
+df$Style <- NA
+df$SubStyle <- NA
+df$SubSubStyle <- NA
+cktg_types <- 'resources.html'
+cktg_types_read <- read_html(paste(cktg, cktg_types, sep = ''))
+types <- cktg_types_read %>%
+  html_nodes('.ysw-lp-row-item') %>%
+  html_nodes('h2') %>%
+  html_nodes("a") %>%
+  html_attrs() %>%
+  tibble() %>%
+  unnest_wider('.')
+
+for (x in c(1:length(types$href))[-16]) {
+  tryCatch({
+    cktg_styles_knives_read <- read_html(paste(cktg, types$href[x], sep = ""))
+    test <- cktg_styles_knives_read %>% html_node(".price")
+    if (!is.na(test)) {
+      knives <- cktg_styles_knives_read %>%
+        html_nodes('.section-details') %>%
+        html_nodes('a') %>%
+        html_attr("href") %>%
+        tibble() %>%
+        unnest_wider('.') %>%
+        mutate(Style = types$title[x]) %>%
+        rename(href = ...1)
+      for (t in 1:length(knives$href)) {
+        if (knives$href[t] %in% df$href) {
+          df$Style[which(df$href %in% knives$href[t])] <- knives$Style[t]
+        }
+      }
+      
+    }
+    else {
+      styles <- cktg_styles_knives_read %>%
+        cktg_query()
+      
+      for (y in 1:length(styles$href)) {
+        cktg_styles_read <- read_html(paste(cktg, styles$href[y], sep = ""))
+        test <- cktg_styles_read %>% html_node(".price")
+        
+        if (!is.na(test)) {
+          knives <-  cktg_styles_read %>%
+            cktg_query() %>%
+            mutate(Style = types$title[x],
+                   SubStyle = styles$title[y])
+          
+          for (t in 1:length(knives$href)) {
+            if (knives$href[t] %in% df$href) {
+              df$Style[which(df$href %in% knives$href[t])] <- knives$Style[t]
+              df$SubStyle[which(df$href %in% knives$href[t])] <- knives$SubStyle[t]
+            }
+          }
+        }
+        else {
+          sub_type <- cktg_styles_read %>%
+            cktg_query()
+          for (z in 1:length(sub_type)) {
+            cktg_knives_sub_read <- read_html(paste(cktg, sub_type$href[z], sep = ""))
+            
+            knives <- cktg_knives_sub_read %>%
+              cktg_query() %>%
+              mutate(
+                Style = types$title[x],
+                SubStyle = styles$title[y],
+                SubSubStyle = sub_type$title[z]
+              )
+            for (t in 1:length(knives$href)) {
+              if (knives$href[t] %in% df$href) {
+                df$Style[which(df$href %in% knives$href[t])] <- knives$Style[t]
+                df$SubStyle[which(df$href %in% knives$href[t])] <- knives$SubStyle[t]
+                df$SubSubStyle[which(df$href %in% knives$href[t])] <- knives$SubSubStyle[t]
+              }
+            }
+          }
+        }
+        
+      }
+    }
+  },
+  error <- function(e) {
+    cat("ERROR :", conditionMessage(e), "\n")
+  })
+}
+
+write.csv(df, file = 'CKTG_KNIFE.csv')
+
+
+```
+
